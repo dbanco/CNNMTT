@@ -169,41 +169,53 @@ def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.ran
 
 
 class MTTSyntheticDataset(Dataset):
-    def __init__(self, num_samples, sequence_length, input_shape, generate_fn, start_idx=0):
+    def __init__(self, num_samples, sequence_length, input_shape, generate_fn, start_idx=0, cache=True):
+        """
+        num_samples: Number of synthetic sequences to generate
+        sequence_length: Frames per sequence
+        input_shape: (C, H, W)
+        generate_fn: Function that generates (input_seq, truth_seq) given seed/index
+        start_idx: Offset for seeding sequence generation
+        cache: Whether to precompute and store full sequences
+        """
         self.num_samples = num_samples
         self.sequence_length = sequence_length
-        self.input_shape = input_shape
         self.generate_fn = generate_fn
+        self.input_shape = input_shape
         self.start_idx = start_idx
+        self.cache = cache
 
-        # Cache dicts for sequences already generated
-        self.V_cache = {}
-        self.U_cache = {}
+        self.total_frames = num_samples * sequence_length
+
+        # Cache all sequences once up front (each is (C, H, W, T))
+        if self.cache:
+            self.data_cache = []
+            self.truth_cache = []
+
+            for seq_idx in range(num_samples):
+                V, U, _ = self.generate_fn(seed=seq_idx + start_idx)
+                # Transpose from (C, H, W, T) to (T, C, H, W)
+                V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
+                U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
+                self.data_cache.append(V)
+                self.truth_cache.append(U)
 
     def __len__(self):
-        return self.num_samples * self.sequence_length
-
-    def _load_sequence(self, seq_idx):
-        # Generate and cache sequence if not present
-        if seq_idx not in self.V_cache:
-            V, U, _ = self.generate_fn(seq_idx + self.start_idx)
-
-            # Permute to (T, C, H, W)
-            V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
-            U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
-
-            self.V_cache[seq_idx] = V
-            self.U_cache[seq_idx] = U
-
-        return self.V_cache[seq_idx], self.U_cache[seq_idx]
+        return self.total_frames
 
     def __getitem__(self, idx):
         seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        V_seq, U_seq = self._load_sequence(seq_idx)
-        input_img = V_seq[frame_idx]
-        truth_mask = U_seq[frame_idx]
+        if self.cache:
+            input_img = self.data_cache[seq_idx][frame_idx]
+            truth_mask = self.truth_cache[seq_idx][frame_idx]
+        else:
+            V, U, _ = self.generate_fn(seed=seq_idx + self.start_idx)
+            V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
+            U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
+            input_img = V[frame_idx]
+            truth_mask = U[frame_idx]
 
         return input_img.float(), truth_mask.float()
 
