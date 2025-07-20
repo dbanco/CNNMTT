@@ -68,7 +68,7 @@ def sample_peak_positions(H, W, num_spots, min_sep=15, p_close=0.1):
     return coords
 
 
-def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.random.randint(2,6), num_outputs=4, noise=True, seed=None):
+def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.random.randint(2,6), num_outputs=1, noise=True, seed=None):
     """
     Generate synthetic MTT dataset:
     - V: blurred Gaussian spots + noise (observed)
