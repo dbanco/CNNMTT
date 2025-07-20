@@ -157,7 +157,7 @@ def main(args):
             "architecture": "MTTModel"
         })
         wandb.watch(model, log="all")
-'''
+    '''
     train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
     test_dataset = MTTSyntheticDataset(num_samples=1,
