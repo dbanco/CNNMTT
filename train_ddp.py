@@ -133,8 +133,6 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
-    dataset = MTTSyntheticDataset(3, 1000000, 30, noise=True, input_shape=(32, 96, 30), seed=None)
-    
     train_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,

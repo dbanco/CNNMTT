@@ -218,18 +218,13 @@ class MTTSyntheticDataset(Dataset):
         self.grow_width_y = 0.1 + 0.3 * np.random.rand(self.num_samples,self.num_spots)
         self.grow_width_x = 5   + 2   * np.random.randn(self.num_samples,self.num_spots)
 
-        self.pos_y_t = np.zeros((self.num_samples, self.num_spots, T))
-        self.pos_x_t = np.zeros((self.num_samples, self.num_spots, T))
-        self.width_y_t = np.zeros((self.num_samples, self.num_spots, T))
-        self.width_x_t = np.zeros((self.num_samples, self.num_spots, T))
-
         psf_sigma = 1
         g_y = gaussian_basis_1d(H, H/2, psf_sigma, scaling='max')
         g_x = gaussian_basis_1d(W, W/2, psf_sigma, scaling='max')
         self.target_psf = np.outer(g_y, g_x)
         
-    def generate_frame(self, seed, t):
-        i = seed
+    def generate_frame(self, seq_idx, t):
+        i = seq_idx
         H, W, _ = self.input_shape
         frame_clean = np.zeros((H, W))
         frame_truth = np.zeros((H, W))
@@ -242,10 +237,16 @@ class MTTSyntheticDataset(Dataset):
             pos_x_t = self.base_pos_x[i,j] + self.shift_amp_x[i,j] * self.t_quad[t]
             width_y_t = self.base_width_y[i,j] + self.grow_width_y[i,j] * self.t_quad[t]
             width_x_t = self.base_width_x[i,j] + self.grow_width_x[i,j] * self.t_quad[t]
-            
+             
+            if width_y_t <= 0 or width_x_t <= 0:
+                raise ValueError(f"Invalid width: width_y={width_y_t}, width_x={width_x_t}")
+           
             g_y = gaussian_basis_1d(H, pos_y_t, width_y_t)
             g_x = gaussian_basis_1d(W, pos_x_t, width_x_t)
             spot = self.amps[i,j] * np.outer(g_y, g_x)
+            if np.any(np.isnan(spot)) or np.any(np.isinf(spot)):
+                raise ValueError(f"NaN/Inf in spot for i={i}, j={j}")
+            
             frame_clean += spot
             
             py = int(np.clip(round(pos_y_t), 0, H - 1))
