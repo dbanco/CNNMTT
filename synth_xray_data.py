@@ -188,10 +188,6 @@ class MTTSyntheticDataset(Dataset):
         if seq_idx not in self.V_cache:
             V, U, _ = self.generate_fn(seq_idx + self.start_idx)
 
-            # Add channel dim to V if needed
-            if V.ndim == 3:
-                V = np.expand_dims(V, axis=0)  # (H, W, T) -> (1, H, W, T)
-
             # Permute to (T, C, H, W)
             V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
             U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
