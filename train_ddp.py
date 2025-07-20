@@ -57,7 +57,6 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
     
     logging.info(f"Starting new training run — outputs in {output_dir}")
 
-
     for epoch in range(num_epochs):
         train_sampler.set_epoch(epoch)
         model.train()
@@ -157,7 +156,7 @@ def main(args):
             "architecture": "MTTModel"
         })
         wandb.watch(model, log="all")
-    '''
+    
     train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
     test_dataset = MTTSyntheticDataset(num_samples=1,
@@ -177,7 +176,7 @@ def main(args):
         "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
         "Test Sequence Visualization": wandb.Image(f"{save_dir}/test_visualization.png"),
         })
-    '''
+    
     dist.destroy_process_group()
 
 if __name__ == '__main__':
@@ -186,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=30)
+    parser.add_argument('--batch_size', type=int, default=60)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
