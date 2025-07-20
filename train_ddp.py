@@ -95,19 +95,20 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
     return train_losses
 
-def visualize_sequence(model, data_loader, device, title_prefix="", time_indices=[0, 4, 8, 12, 16]):
+def visualize_sequence_and(model, data_loader, device, save_dir, prefix="sequence", time_indices=[0,4,8,12,16]):
+    os.makedirs(save_dir, exist_ok=True)
     model.eval()
     with torch.no_grad():
-        inputs, truths = next(iter(data_loader))  # shape: (T, 1, H, W)
+        inputs, truths = next(iter(data_loader))  # (T, 1, H, W)
         inputs, truths = inputs.to(device), truths.to(device)
 
         fig, axs = plt.subplots(len(time_indices), 3, figsize=(10, 2.5 * len(time_indices)))
-        fig.suptitle(f"{title_prefix} Sequence Visualization", fontsize=14)
+        fig.suptitle(f"{prefix} Visualization", fontsize=14)
 
         for row_idx, t in enumerate(time_indices):
-            input_frame = inputs[t].unsqueeze(0)   # (1, 1, H, W)
-            truth_frame = truths[t, 0].cpu().numpy()  # (H, W)
-            output_frame = model(input_frame).squeeze().cpu().numpy()  # (H, W)
+            input_frame = inputs[t].unsqueeze(0)   # (1,1,H,W)
+            truth_frame = truths[t, 0].cpu().numpy()
+            output_frame = model(input_frame).squeeze().cpu().numpy()
 
             axs[row_idx, 0].imshow(input_frame[0, 0].cpu().numpy(), cmap='gray')
             axs[row_idx, 0].set_title(f"Input t={t}")
@@ -120,7 +121,12 @@ def visualize_sequence(model, data_loader, device, title_prefix="", time_indices
                 axs[row_idx, col].axis('off')
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.show()
+
+        filename = os.path.join(save_dir, f"{prefix}_visualization.png")
+        plt.savefig(filename)
+        plt.close(fig)
+        print(f"Saved visualization to {filename}")
+
 
 def main(args):
     local_rank = setup_ddp()
@@ -150,7 +156,7 @@ def main(args):
         })
         wandb.watch(model, log="all")
 
-    train_losses = train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
+    train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
     test_dataset = MTTSyntheticDataset(num_samples=1,
                                         sequence_length=args.sequence_length,
@@ -161,8 +167,14 @@ def main(args):
     train_loader = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 
     if dist.get_rank() == 0:
-        visualize_sequence(model, train_loader, device, title_prefix="Train")
-        visualize_sequence(model, test_loader, device, title_prefix="Test")
+        save_dir = "./visualizations"
+        visualize_sequence_and(model, train_loader, device, save_dir, prefix="train")
+        visualize_sequence_and(model, test_loader, device, save_dir, prefix="test")
+        
+        wandb.log({
+        "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
+        "Test Sequence Visualization": wandb.Image(f"{save_dir}/test_visualization.png"),
+        })
     
     dist.destroy_process_group()
 
