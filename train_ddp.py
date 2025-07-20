@@ -133,11 +133,14 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
-    train_dataset = MTTSyntheticDataset(num_samples=args.num_train_samples,
+    dataset = MTTSyntheticDataset(3, 1000000, 30, noise=True, input_shape=(32, 96, 30), seed=None)
+    
+    train_dataset = MTTSyntheticDataset(num_spots=3,
+                                        num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
+                                        noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        generate_fn=generate_fn,
-                                        start_idx=0)
+                                        seed=1)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
@@ -155,11 +158,13 @@ def main(args):
     
     train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
-    test_dataset = MTTSyntheticDataset(num_samples=1,
+
+    test_dataset = MTTSyntheticDataset(num_spots=3,
+                                        num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
+                                        noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        generate_fn=generate_fn,
-                                        start_idx=args.num_train_samples)
+                                        seed=2)
     test_loader = DataLoader(test_dataset, batch_size=args.sequence_length)
     train_loader = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 

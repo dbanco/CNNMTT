@@ -71,7 +71,6 @@ def sample_peak_positions(H, W, num_spots, min_sep=15, p_close=0.1):
     
     return coords
 
-
 def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.random.randint(2,6), num_outputs=1, noise=True, seed=None):
     """
     Generate synthetic MTT dataset:
@@ -167,9 +166,8 @@ def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.ran
 
     return V, U, spot_params
 
-
 class MTTSyntheticDataset(Dataset):
-    def __init__(self, num_samples, sequence_length, input_shape, generate_fn, start_idx=0, cache=True):
+    def __init__(self, num_spots, num_samples, sequence_length, noise, input_shape, seed=None):
         """
         num_samples: Number of synthetic sequences to generate
         sequence_length: Frames per sequence
@@ -178,27 +176,17 @@ class MTTSyntheticDataset(Dataset):
         start_idx: Offset for seeding sequence generation
         cache: Whether to precompute and store full sequences
         """
+        self.num_spots = num_spots
         self.num_samples = num_samples
         self.sequence_length = sequence_length
-        self.generate_fn = generate_fn
         self.input_shape = input_shape
-        self.start_idx = start_idx
-        self.cache = cache
+        self.noise = noise
+        if seed is not None:
+            np.random.seed(seed)
 
         self.total_frames = num_samples * sequence_length
-
-        # Cache all sequences once up front (each is (C, H, W, T))
-        if self.cache:
-            self.data_cache = []
-            self.truth_cache = []
-
-            for seq_idx in range(num_samples):
-                V, U, _ = self.generate_fn(seed=seq_idx + start_idx)
-                # Transpose from (C, H, W, T) to (T, C, H, W)
-                V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
-                U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
-                self.data_cache.append(V)
-                self.truth_cache.append(U)
+        
+        self.precompute_params()
 
     def __len__(self):
         return self.total_frames
@@ -207,17 +195,70 @@ class MTTSyntheticDataset(Dataset):
         seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        if self.cache:
-            input_img = self.data_cache[seq_idx][frame_idx]
-            truth_mask = self.truth_cache[seq_idx][frame_idx]
-        else:
-            V, U, _ = self.generate_fn(seed=seq_idx + self.start_idx)
-            V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
-            U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
-            input_img = V[frame_idx]
-            truth_mask = U[frame_idx]
+        input_img, truth_mask, = self.generate_frame(seq_idx, frame_idx)
 
-        return input_img.float(), truth_mask.float()
+
+    def precompute_params(self):
+        T = self.sequence_length
+        H, W, _ = self.input_shape
+        t_vals = np.linspace(0, 1, T)
+        self.t_quad = t_vals ** 2
+        
+        spots_shape = (self.num_samples, self.num_spots)
+        self.amps = 20 + 130* np.random.rand(self.num_samples,self.num_spots)
+        self.base_pos_y = 0.25*H + 0.5*np.random.randint(0, H, size=spots_shape)
+        self.base_pos_x = 0.15*W + 0.5*np.random.randint(0, W, size=spots_shape)
+
+        self.shift_amp_y = H * 0.005 * np.random.rand(self.num_samples,self.num_spots)      # tiny vertical shift
+        self.shift_amp_x = W * (0.02 + 0.06 * np.random.rand(self.num_samples,self.num_spots))  # larger horizontal shift
+
+        self.base_width_y = 1.5 + 0.200 * np.random.rand(self.num_samples,self.num_spots)
+        self.base_width_x = 0.5 + 0.125 * np.random.rand(self.num_samples,self.num_spots)
+
+        self.grow_width_y = 0.1 + 0.3 * np.random.rand(self.num_samples,self.num_spots)
+        self.grow_width_x = 5   + 2   * np.random.randn(self.num_samples,self.num_spots)
+
+        self.pos_y_t = np.zeros((self.num_samples, self.num_spots, T))
+        self.pos_x_t = np.zeros((self.num_samples, self.num_spots, T))
+        self.width_y_t = np.zeros((self.num_samples, self.num_spots, T))
+        self.width_x_t = np.zeros((self.num_samples, self.num_spots, T))
+
+        psf_sigma = 1
+        g_y = gaussian_basis_1d(H, H/2, psf_sigma, scaling='max')
+        g_x = gaussian_basis_1d(W, W/2, psf_sigma, scaling='max')
+        self.target_psf = np.outer(g_y, g_x)
+        
+    def generate_frame(self, seed, t):
+        i = seed
+        H, W, _ = self.input_shape
+        frame_clean = np.zeros((H, W))
+        frame_truth = np.zeros((H, W))
+
+        V = np.zeros((1, H, W))  
+        U = np.zeros((1, H, W))  
+        
+        for j in range(self.num_spots):
+            pos_y_t = self.base_pos_y[i,j] + self.shift_amp_y[i,j] * self.t_quad[t]
+            pos_x_t = self.base_pos_x[i,j] + self.shift_amp_x[i,j] * self.t_quad[t]
+            width_y_t = self.base_width_y[i,j] + self.grow_width_y[i,j] * self.t_quad[t]
+            width_x_t = self.base_width_x[i,j] + self.grow_width_x[i,j] * self.t_quad[t]
+            
+            g_y = gaussian_basis_1d(H, pos_y_t, width_y_t)
+            g_x = gaussian_basis_1d(W, pos_x_t, width_x_t)
+            spot = self.amps[i,j] * np.outer(g_y, g_x)
+            frame_clean += spot
+            
+            py = int(np.clip(round(pos_y_t), 0, H - 1))
+            px = int(np.clip(round(pos_x_t), 0, W - 1))
+
+            frame_truth[py, px] += 100      # indicator
+
+        frame_truth = convolve(frame_truth, self.target_psf, mode='constant')
+        
+        U[0, :, :] = frame_truth
+        V[0, :, :] = np.random.poisson(frame_clean) if self.noise else frame_clean
+
+        return V, U
 
 # This function adapts the big generated volume to one sample per call for Dataset
 def generate_fn(seed):
@@ -233,6 +274,8 @@ def generate_fn(seed):
 
 if __name__ == "__main__": 
     
+    dataset = MTTSyntheticDataset(3, 1000000, 30, noise=True, input_shape=(32, 96, 30), seed=None)
+    '''
     # Generate the full dataset once for the sake of example
     V, U, params = generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), seed=np.random.randint(0,10000))
 
@@ -244,17 +287,17 @@ if __name__ == "__main__":
         titles = ['Truth Intensity (Channel 0)', 'Truth Width X (Channel 1)', 'Truth Width Y (Channel 2)', 'Observed Data V']
     
         # Plot truth channels
-        for i in range(3):
+        for i in range(1):
             im = axs[f][i].imshow(U[i, :, :, frame], cmap='hot', aspect='auto')
             axs[f][i].set_title(titles[i])
             axs[f][i].axis('off')
             # fig.colorbar(im, ax=axs[i], fraction=0.046, pad=0.04)
     
         # Plot observed data
-        im = axs[f][3].imshow(V[:, :, frame], cmap='hot', aspect='auto')
+        im = axs[f][3].imshow(V[0, :, :, frame], cmap='hot', aspect='auto')
         axs[f][3].set_title(titles[3])
         axs[f][3].axis('off')
         fig.colorbar(im, ax=axs[f][3], fraction=0.046, pad=0.04)
     
         plt.show()
-
+    '''
