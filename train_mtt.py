@@ -18,6 +18,8 @@ import logging
 import os
 from datetime import datetime
 
+import wandb
+
 def train(model, train_loader, criterion, optimizer, device, num_epochs):
     train_losses = []
 
@@ -61,6 +63,7 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs):
         epoch_loss = running_loss / len(train_loader)
         train_losses.append(epoch_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] average loss: {epoch_loss:.6f}")
+        wandb.log({"epoch": epoch+1, "train_loss": epoch_loss})
         
         # Save checkpoint
         checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch+1}.pt")
@@ -108,6 +111,15 @@ def main(args):
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+
+    wandb.init(project="mtt-cnn", config={
+        "epochs": args.num_epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "architecture": "MTTModel"
+    })
+    wandb.watch(model, log="all")
 
     train_losses = train(model, train_loader, criterion, optimizer, device, args.num_epochs)
 
