@@ -5,23 +5,25 @@ Created on Sat Jul 19 17:52:09 2025
 @author: dpqb1
 """
 import torch
-from torch.utils.data import DataLoader
+
 import torch.optim as optim
 import torch.nn as nn
-import matplotlib.pyplot as plt
-import argparse
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
 
+import argparse
 from mtt_cnn import MTTModel
 from synth_xray_data import MTTSyntheticDataset, generate_fn
 
 import logging
 import os
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 import wandb
 
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
+
 
 def setup_ddp():
     dist.init_process_group(backend="nccl")
@@ -72,14 +74,15 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
             running_loss += loss.item()
             logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.6f}")
-
-        epoch_loss = running_loss / len(train_loader)
-        train_losses.append(epoch_loss)
-        print(f"Epoch [{epoch+1}/{num_epochs}] average loss: {epoch_loss:.6f}")
-        wandb.log({"epoch": epoch+1, "train_loss": epoch_loss})
         
         # Save checkpoint
         if dist.get_rank() == 0:
+            epoch_loss = running_loss / len(train_loader)
+            train_losses.append(epoch_loss)
+            
+            print(f"Epoch [{epoch+1}/{num_epochs}] average loss: {epoch_loss:.6f}")
+            wandb.log({"epoch": epoch+1, "train_loss": epoch_loss})
+            
             checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch+1}.pt")
             torch.save({
                 'epoch': epoch + 1,
@@ -92,24 +95,32 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
     return train_losses
 
-def visualize_results(model, loader, device, num_outputs):
+def visualize_sequence(model, data_loader, device, title_prefix="", time_indices=[0, 4, 8, 12, 16]):
     model.eval()
-    for batch_idx, (inputs, truths) in enumerate(loader):
+    with torch.no_grad():
+        inputs, truths = next(iter(data_loader))  # shape: (T, 1, H, W)
         inputs, truths = inputs.to(device), truths.to(device)
-        outputs = model(inputs)
 
-        fig, axs = plt.subplots(3, num_outputs, figsize=(12, 9))
-        for i in range(num_outputs):
-            axs[0].imshow(inputs.cpu().numpy()[0, 0], cmap='gray')
-            axs[1].imshow(truths.cpu().numpy()[0, i], cmap='viridis')
-            axs[2].imshow(outputs.cpu().detach().numpy()[0, i], cmap='viridis')
-            axs[0].set_title(f'Ch {i}')
-        axs[0].set_ylabel("Input")
-        axs[1].set_ylabel("Truth")
-        axs[2].set_ylabel("Output")
-        plt.tight_layout()
+        fig, axs = plt.subplots(len(time_indices), 3, figsize=(10, 2.5 * len(time_indices)))
+        fig.suptitle(f"{title_prefix} Sequence Visualization", fontsize=14)
+
+        for row_idx, t in enumerate(time_indices):
+            input_frame = inputs[t].unsqueeze(0)   # (1, 1, H, W)
+            truth_frame = truths[t, 0].cpu().numpy()  # (H, W)
+            output_frame = model(input_frame).squeeze().cpu().numpy()  # (H, W)
+
+            axs[row_idx, 0].imshow(input_frame[0, 0].cpu().numpy(), cmap='gray')
+            axs[row_idx, 0].set_title(f"Input t={t}")
+            axs[row_idx, 1].imshow(truth_frame, cmap='viridis')
+            axs[row_idx, 1].set_title(f"Truth t={t}")
+            axs[row_idx, 2].imshow(output_frame, cmap='viridis')
+            axs[row_idx, 2].set_title(f"Output t={t}")
+
+            for col in range(3):
+                axs[row_idx, col].axis('off')
+
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.show()
-        break
 
 def main(args):
     local_rank = setup_ddp()
@@ -123,34 +134,35 @@ def main(args):
                                         input_shape=(1, args.height, args.width),
                                         generate_fn=generate_fn,
                                         start_idx=0)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, 
-                              shuffle=True, pin_memory=True, num_workers=4)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,
+                              pin_memory=True, num_workers=4)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-
-    wandb.init(project="mtt-cnn", config={
-        "epochs": args.num_epochs,
-        "batch_size": args.batch_size,
-        "learning_rate": args.lr,
-        "architecture": "MTTModel"
-    })
-    wandb.watch(model, log="all")
+    if dist.get_rank() == 0:
+        wandb.init(project="mtt-cnn", config={
+            "epochs": args.num_epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.lr,
+            "architecture": "MTTModel"
+        })
+        wandb.watch(model, log="all")
 
     train_losses = train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
-    plt.figure()
-    plt.plot(train_losses, label='Train Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.title('Learning Curve')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    test_dataset = MTTSyntheticDataset(num_samples=1,
+                                        sequence_length=args.sequence_length,
+                                        input_shape=(1, args.height, args.width),
+                                        generate_fn=generate_fn,
+                                        start_idx=args.num_train_samples)
+    test_loader = DataLoader(test_dataset, batch_size=args.sequence_length)
+    train_loader = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 
-    visualize_results(model, train_loader, device, args.num_outputs)
+    if dist.get_rank() == 0:
+        visualize_sequence(model, train_loader, device, title_prefix="Train")
+        visualize_sequence(model, test_loader, device, title_prefix="Test")
     
     dist.destroy_process_group()
 

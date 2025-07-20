@@ -107,7 +107,8 @@ def main(args):
                                         generate_fn=generate_fn,
                                         start_idx=0)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, 
+                              shuffle=True, pin_memory=True, num_workers=4)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
