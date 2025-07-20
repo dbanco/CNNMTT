@@ -1,18 +1,24 @@
-#!/bin/bash
-#SBATCH --job-name=mtt_ddp
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4           # Number of processes (GPUs) per node
-#SBATCH --gres=gpu:4                  # Adjust if you have more GPUs
-#SBATCH --cpus-per-task=4             # Number of CPU cores per task
-#SBATCH --mem=4g
-#SBATCH --time=04:00:00
+#!/bin/bash -l
+#SBATCH -J cnn-mtt               # job name
+#SBATCH --time=00-00:60:00           # requested time (DD-HH:MM:SS)
+#SBATCH -p gpu,preempt               # partitions to run on
+#SBATCH -N 1                        # number of nodes
+#SBATCH -n 4                        # number of tasks total (processes)
+#SBATCH --mem=8g                    # total RAM requested (increase if needed)
+#SBATCH --gres=gpu:a100:4           # request 4 A100 GPUs
+#SBATCH --constraint="a100-80G"     # only request A100 with 80GB memory
+#SBATCH --output=MyJob.%j.%N.out    # stdout file
+#SBATCH --error=MyJob.%j.%N.err     # stderr file
+#SBATCH --mail-type=ALL             # email notifications on all events
+#SBATCH --mail-user=Your_Tufts_Email@tufts.edu
+
+module purge
 
 module load anaconda
 module load cuda
-conda activate xrayai
+source activate xrayai
 
-# Launch distributed training using torchrun
-torchrun \
-  --nproc_per_node=2 \
-  --master_port=12355 \
-  train_ddp.py
+# Launch distributed training using torchrun with 4 GPUs
+torchrun --nproc_per_node=4 --master_port=12355 train_ddp.py
+
+conda deactivate
