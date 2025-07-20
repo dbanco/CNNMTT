@@ -8,6 +8,8 @@ import torch
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 from scipy.ndimage import convolve
+import torch.distributed as dist
+import time
 
 
 def gaussian_basis_1d(N, mu, sigma, scaling='2-norm'):
@@ -165,50 +167,66 @@ def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.ran
 
 
 class MTTSyntheticDataset(Dataset):
-    def __init__(self, num_samples, sequence_length, input_shape, generate_fn, start_idx):
+    def __init__(self, num_samples, sequence_length, input_shape, generate_fn, start_idx=0, cache=True):
         """
-        Args:
-            num_samples (int): how many samples (time points) to generate
-            input_shape (tuple): (C_in, H, W) shape of input observations
-            generate_fn (function): user-defined function that returns
-                (input_obs, truth_mask) tuple of numpy arrays
+        num_samples: Number of synthetic sequences to generate
+        sequence_length: Frames per sequence
+        input_shape: (C, H, W)
+        generate_fn: Function that generates (input_seq, truth_seq) given seed/index
+        start_idx: Offset for seeding sequence generation
+        cache: Whether to precompute and store full sequences
         """
         self.num_samples = num_samples
         self.sequence_length = sequence_length
-        self.input_shape = input_shape
         self.generate_fn = generate_fn
+        self.input_shape = input_shape
         self.start_idx = start_idx
+        self.cache = cache
+
+        self.total_frames = num_samples * sequence_length
+
+        # Cache all sequences once up front (each is (C, H, W, T))
+        if self.cache:
+            self.data_cache = []
+            self.truth_cache = []
+
+            for seq_idx in range(num_samples):
+                V, U, _ = self.generate_fn(seed=seq_idx + start_idx)
+                # Transpose from (C, H, W, T) to (T, C, H, W)
+                V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
+                U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
+                self.data_cache.append(V)
+                self.truth_cache.append(U)
 
     def __len__(self):
-        return self.num_samples * self.sequence_length
+        return self.total_frames
 
     def __getitem__(self, idx):
-        # Flattened index -> (sequence_index, frame_index)
-        seq_idx = self.start_idx + (idx // self.sequence_length)
+        seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        # Generate or retrieve the (seq_idx)-th sequence, and pick frame_idx
-        input_img, truth_mask = self.generate_fn(seq_idx, frame_idx)
+        if self.cache:
+            input_img = self.data_cache[seq_idx][frame_idx]
+            truth_mask = self.truth_cache[seq_idx][frame_idx]
+        else:
+            V, U, _ = self.generate_fn(seed=seq_idx + self.start_idx)
+            V = torch.from_numpy(V).permute(3, 0, 1, 2).contiguous()
+            U = torch.from_numpy(U).permute(3, 0, 1, 2).contiguous()
+            input_img = V[frame_idx]
+            truth_mask = U[frame_idx]
+
         return input_img.float(), truth_mask.float()
 
-# Global caches
-V_global = {}
-U_global = {}
-
 # This function adapts the big generated volume to one sample per call for Dataset
-def generate_fn(seq_idx, frame_idx):
-    # Seed based on sequence so we can have diverse tracks per sequence
-    np.random.seed(seq_idx)
-
-    # Generate a sequence of simulated targets
-    V_global[seq_idx], U_global[seq_idx], _ = generate_mtt_dataset_multichannel_truth(seed=seq_idx)
-
-    input_img = V_global[seq_idx][:, :, frame_idx]  # shape (H, W)
-    truth_mask = U_global[seq_idx][:, :, :, frame_idx]  # shape (4, H, W)
-
-    input_img = torch.from_numpy(input_img).unsqueeze(0)  # (1, H, W)
-    truth_mask = torch.from_numpy(truth_mask)             # (4, H, W)
-    return input_img, truth_mask
+def generate_fn(seed):
+    """
+    Given a seed (or seq_idx), generate one full synthetic sequence:
+    - V: observed data volume (C,H,W,T) or (H,W,T)
+    - U: ground truth volume (num_outputs, H, W, T)
+    - params: any spot parameters (optional)
+    """
+    V, U, params = generate_mtt_dataset_multichannel_truth(seed=seed)
+    return V, U, params
     
 
 if __name__ == "__main__": 

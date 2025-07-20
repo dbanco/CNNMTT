@@ -63,6 +63,7 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
         running_loss = 0.0
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
+            print(f"[Rank {dist.get_rank()}] Batch {batch_idx}", flush=True)
             inputs, truths = inputs.to(device), truths.to(device)
 
             optimizer.zero_grad()
