@@ -195,7 +195,7 @@ class MTTSyntheticDataset(Dataset):
         seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        input_img, truth_mask, = self.generate_frame(seq_idx, frame_idx)
+        input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
 
 
     def precompute_params(self):
