@@ -135,8 +135,10 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
-    print(f"Rank: {dist.get_rank()}, Local rank: {local_rank}, World size: {dist.get_world_size()}, Device: {device}")
-
+    print(f"[Rank {dist.get_rank()}] DDP setup complete. Device: {torch.cuda.current_device()}", flush=True)
+    dist.barrier()
+    print(f"[Rank {dist.get_rank()}] Barrier passed. Beginning data setup...", flush=True)
+    
     train_dataset = MTTSyntheticDataset(num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
                                         input_shape=(1, args.height, args.width),
