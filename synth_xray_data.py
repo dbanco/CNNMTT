@@ -30,10 +30,12 @@ def gaussian_basis_1d(N, mu, sigma, scaling='2-norm'):
     dist_sq = dist**2
 
     b = np.exp(-dist_sq / (2 * sigma**2))
-
+    
     # Apply scaling
     if scaling == '2-norm':
-        b /= np.linalg.norm(b)
+        norm = np.linalg.norm(b)
+        if norm > 0:
+            b /= np.linalg.norm(b)
     elif scaling == '1-norm':
         b /= np.sum(np.abs(b))
     elif scaling == 'max':
