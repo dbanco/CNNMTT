@@ -73,7 +73,8 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
             optimizer.step()
 
             running_loss += loss.item()
-            logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.6f}")
+            if dist.get_rank() == 0:
+                logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.6f}")
         
         # Save checkpoint
         if dist.get_rank() == 0:
@@ -86,7 +87,7 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
             checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch+1}.pt")
             torch.save({
                 'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': model.module.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': epoch_loss
             }, checkpoint_path)
@@ -135,14 +136,15 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
+    print(f"Rank: {dist.get_rank()}, Local rank: {local_rank}, World size: {dist.get_world_size()}, Device: {device}")
+
     train_dataset = MTTSyntheticDataset(num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
                                         input_shape=(1, args.height, args.width),
                                         generate_fn=generate_fn,
                                         start_idx=0)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,
-                              pin_memory=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -155,7 +157,7 @@ def main(args):
             "architecture": "MTTModel"
         })
         wandb.watch(model, log="all")
-
+'''
     train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
 
     test_dataset = MTTSyntheticDataset(num_samples=1,
@@ -175,7 +177,7 @@ def main(args):
         "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
         "Test Sequence Visualization": wandb.Image(f"{save_dir}/test_visualization.png"),
         })
-    
+    '''
     dist.destroy_process_group()
 
 if __name__ == '__main__':
