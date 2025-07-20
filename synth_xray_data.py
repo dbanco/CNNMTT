@@ -154,6 +154,7 @@ def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.ran
             U[:, :, :, t] = frame_truth
         
         V[:, :, t] = np.random.poisson(frame_clean) if noise else frame_clean
+        V = np.expand_dims(V, axis=0)
 
     spot_params = {
         'positions_y': pos_y_t,
