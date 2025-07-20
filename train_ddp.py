@@ -23,8 +23,6 @@ import matplotlib.pyplot as plt
 
 import wandb
 
-
-
 def setup_ddp():
     dist.init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -63,7 +61,6 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
         running_loss = 0.0
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
-            print(f"[Rank {dist.get_rank()}] Batch {batch_idx}", flush=True)
             inputs, truths = inputs.to(device), truths.to(device)
 
             optimizer.zero_grad()
@@ -96,7 +93,7 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
     return train_losses
 
-def visualize_sequence_and(model, data_loader, device, save_dir, prefix="sequence", time_indices=[0,4,8,12,16]):
+def visualize_sequence(model, data_loader, device, save_dir, prefix="sequence", time_indices=[0,4,8,12,16,24,28]):
     os.makedirs(save_dir, exist_ok=True)
     model.eval()
     with torch.no_grad():
@@ -136,10 +133,6 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
-    print(f"[Rank {dist.get_rank()}] DDP setup complete. Device: {torch.cuda.current_device()}", flush=True)
-    dist.barrier()
-    print(f"[Rank {dist.get_rank()}] Barrier passed. Beginning data setup...", flush=True)
-    
     train_dataset = MTTSyntheticDataset(num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
                                         input_shape=(1, args.height, args.width),
@@ -172,8 +165,8 @@ def main(args):
 
     if dist.get_rank() == 0:
         save_dir = "./visualizations"
-        visualize_sequence_and(model, train_loader, device, save_dir, prefix="train")
-        visualize_sequence_and(model, test_loader, device, save_dir, prefix="test")
+        visualize_sequence(model, train_loader, device, save_dir, prefix="train")
+        visualize_sequence(model, test_loader, device, save_dir, prefix="test")
         
         wandb.log({
         "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
@@ -184,11 +177,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=100)
+    parser.add_argument('--num_train_samples', type=int, default=10000)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=60)
+    parser.add_argument('--batch_size', type=int, default=120)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
