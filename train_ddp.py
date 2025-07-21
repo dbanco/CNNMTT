@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import argparse
 from mtt_cnn import MTTModel
-from synth_xray_data import MTTSyntheticDataset, generate_fn
+from synth_xray_data import MTTSyntheticDataset
 
 import logging
 import os
@@ -139,7 +139,7 @@ def main(args):
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+    train_sampler = DistributedSampler(train_dataset, shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
     criterion = nn.MSELoss()
@@ -184,7 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=60)
+    parser.add_argument('--batch_size', type=int, default=600)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)

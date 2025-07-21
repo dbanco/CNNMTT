@@ -195,7 +195,6 @@ class MTTSyntheticDataset(Dataset):
         seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        
         try:
             input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
         except Exception as e:
@@ -206,14 +205,13 @@ class MTTSyntheticDataset(Dataset):
 
     def precompute_params(self):
         T = self.sequence_length
-        H, W, _ = self.input_shape
+        C, H, W = self.input_shape
         t_vals = np.linspace(0, 1, T)
         self.t_quad = t_vals ** 2
         
-        spots_shape = (self.num_samples, self.num_spots)
         self.amps = 20 + 130* np.random.rand(self.num_samples,self.num_spots)
-        self.base_pos_y = (0.25 + 0.5 * np.random.rand(*spots_shape)) * H
-        self.base_pos_x = (0.15 + 0.5 * np.random.rand(*spots_shape)) * W
+        self.base_pos_y = H*(0.25 + 0.5*np.random.rand(self.num_samples,self.num_spots))
+        self.base_pos_x = W*(0.15 + 0.5*np.random.rand(self.num_samples,self.num_spots))
 
         self.shift_amp_y = H * 0.005 * np.random.rand(self.num_samples,self.num_spots)      # tiny vertical shift
         self.shift_amp_x = W * (0.02 + 0.06 * np.random.rand(self.num_samples,self.num_spots))  # larger horizontal shift
@@ -231,7 +229,7 @@ class MTTSyntheticDataset(Dataset):
         
     def generate_frame(self, seq_idx, t):
         i = seq_idx
-        H, W, _ = self.input_shape
+        C, H, W = self.input_shape
         frame_clean = np.zeros((H, W))
         frame_truth = np.zeros((H, W))
 
@@ -280,8 +278,24 @@ def generate_fn(seed):
     
 
 if __name__ == "__main__": 
+    from torch.utils.data import DataLoader
+    train_dataset = MTTSyntheticDataset(num_spots=3,
+                                        num_samples=10,
+                                        sequence_length=30,
+                                        noise=True,
+                                        input_shape=(1, 32, 96),
+                                        seed=1)
+    train_loader = DataLoader(train_dataset, batch_size=30, shuffle=False)
+    for batch_idx, (inputs, truths) in enumerate(train_loader):
+        break
     
-    dataset = MTTSyntheticDataset(3, 100, 30, noise=True, input_shape=(32, 96, 30), seed=None)
+    plt.figure()
+    plt.imshow(inputs[0,0,:,:])
+
+    plt.figure()
+    plt.imshow(truths[0,0,:,:])
+    
+    
     '''
     # Generate the full dataset once for the sake of example
     V, U, params = generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), seed=np.random.randint(0,10000))
