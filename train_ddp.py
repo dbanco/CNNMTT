@@ -129,13 +129,16 @@ def visualize_sequence(model, data_loader, device, save_dir, prefix="sequence", 
 def main(args):
     local_rank = setup_ddp()
     device = torch.device(f"cuda:{local_rank}")
-
-    model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
-    model = DDP(model, device_ids=[local_rank])
-
+    
     # Set seeds for reproducibility
     torch.manual_seed(0)
     torch.cuda.manual_seed_all(0)
+
+    model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
+    model = DDP(model, device_ids=[local_rank])
+    
+    param_count = sum(p.numel() for p in model.parameters())
+    print(f"[RANK {dist.get_rank()}] Model parameter count: {param_count}", flush=True)
 
     train_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
@@ -144,7 +147,7 @@ def main(args):
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
 
-    train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
+    train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=local_rank, shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=4,pin_memory=True,)
 
     criterion = nn.MSELoss()
@@ -189,7 +192,7 @@ if __name__ == '__main__':
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=120)
+    parser.add_argument('--batch_size', type=int, default=90)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
