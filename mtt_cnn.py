@@ -24,7 +24,7 @@ stride = 2
 padding = 4
 output_padding = 1
 class MTTModel(nn.Module):
-    def __init__(self, input_channels=1, output_channels=4):  # output_channels=4 now
+    def __init__(self, input_channels=1, output_channels=1):  # output_channels=4 now
         super(MTTModel, self).__init__()
         
         # Encoder remains unchanged
@@ -65,7 +65,7 @@ class MTTModel(nn.Module):
         return out
     
 class MTTModelQAT(MTTModel):
-    def __init__(self, input_channels=1, output_channels=4):  # output_channels=4 now
+    def __init__(self, input_channels=1, output_channels=1):  # output_channels=4 now
 
         
         self.quant = QuantStub()

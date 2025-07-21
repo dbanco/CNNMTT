@@ -23,19 +23,10 @@ import matplotlib.pyplot as plt
 
 import wandb
 
-def setup_ddp():
-    local_rank = int(os.environ["LOCAL_RANK"])
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
- 
-    torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
-    return local_rank
-
 def cleanup():
     dist.destroy_process_group()
 
-def train(model, train_loader, criterion, optimizer, device, num_epochs, train_sampler):
+def train(model, train_loader, criterion, optimizer, device_id, num_epochs, train_sampler):
     train_losses = []
 
     # Create output/log/checkpoint dirs
@@ -64,7 +55,7 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
         running_loss = 0.0
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
-            inputs, truths = inputs.to(device), truths.to(device)
+            inputs, truths = inputs.to(device_id), truths.to(device_id)
 
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -96,12 +87,12 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
     return train_losses
 
-def visualize_sequence(model, data_loader, device, save_dir, prefix="sequence", time_indices=[0,4,8,12,16,24,28]):
+def visualize_sequence(model, data_loader, device_id, save_dir, prefix="sequence", time_indices=[0,4,8,12,16,24,28]):
     os.makedirs(save_dir, exist_ok=True)
     model.eval()
     with torch.no_grad():
         inputs, truths = next(iter(data_loader))  # (T, 1, H, W)
-        inputs, truths = inputs.to(device), truths.to(device)
+        inputs, truths = inputs.to(device_id), truths.to(device_id)
 
         fig, axs = plt.subplots(len(time_indices), 3, figsize=(10, 2.5 * len(time_indices)))
         fig.suptitle(f"{prefix} Visualization", fontsize=14)
@@ -130,18 +121,22 @@ def visualize_sequence(model, data_loader, device, save_dir, prefix="sequence", 
 
 
 def main(args):
-    local_rank = setup_ddp()
-    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    dist.init_process_group("nccl")
+    rank = dist.get_rank()
+    
+    device_id = rank % torch.cuda.device_count()
     
     # Set seeds for reproducibility
-    torch.manual_seed(0)
-    torch.cuda.manual_seed_all(0)
+    # torch.manual_seed(0)
+    # torch.cuda.manual_seed_all(0)
 
-    model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
-    model = DDP(model, device_ids=[local_rank])
+    model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device_id)
+    model = DDP(model, device_ids=[device_id])
     
     param_count = sum(p.numel() for p in model.parameters())
     print(f"[RANK {dist.get_rank()}] Model parameter count: {param_count}", flush=True)
+
 
     train_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
@@ -165,7 +160,7 @@ def main(args):
         })
         wandb.watch(model, log="all")
     
-    train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
+    train(model, train_loader, criterion, optimizer, device_id, args.num_epochs, train_sampler)
 
 
     test_dataset = MTTSyntheticDataset(num_spots=3,
@@ -179,8 +174,8 @@ def main(args):
 
     if dist.get_rank() == 0:
         save_dir = "./visualizations"
-        visualize_sequence(model, train_loader_vis, device, save_dir, prefix="train")
-        visualize_sequence(model, test_loader, device, save_dir, prefix="test")
+        visualize_sequence(model, train_loader_vis, device_id, save_dir, prefix="train")
+        visualize_sequence(model, test_loader, device_id, save_dir, prefix="test")
         
         wandb.log({
         "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
