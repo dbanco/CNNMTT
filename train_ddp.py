@@ -143,33 +143,8 @@ def main(args):
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        seed=1)
-
-
-    dataset = InMemoryDataset(all_data)
-    
-    sampler = torch.utils.data.distributed.DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True
-    )
-    
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        num_workers=0,  # no workers needed; data is in RAM
-        pin_memory=True
-    )
-
-
-    train_dataset = MTTSyntheticDataset(num_spots=3,
-                                        num_samples=args.num_train_samples,
-                                        sequence_length=args.sequence_length,
-                                        noise=True,
-                                        input_shape=(1, args.height, args.width),
-                                        seed=1)
+                                        seed=1,
+                                        preload=True)
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=16,pin_memory=True,)
@@ -188,13 +163,13 @@ def main(args):
     
     train(model, train_loader, criterion, optimizer, device_id, args.num_epochs, train_sampler)
 
-
     test_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=1,
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        seed=2)
+                                        seed=2,
+                                        preload=True)
     test_loader = DataLoader(test_dataset, batch_size=args.sequence_length)
     train_loader_vis = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 
@@ -212,11 +187,11 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=600)
+    parser.add_argument('--num_train_samples', type=int, default=30000)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=1200)
+    parser.add_argument('--batch_size', type=int, default=3000)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)

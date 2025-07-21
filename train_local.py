@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import argparse
 from mtt_cnn import MTTModel
-from synth_xray_data import MTTSyntheticDataset, generate_fn
+from synth_xray_data import MTTSyntheticDataset
 
 import logging
 import os
@@ -117,7 +117,8 @@ def main(args):
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        seed=0)
+                                        seed=0,
+                                        preload=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
     criterion = nn.MSELoss()
@@ -132,7 +133,8 @@ def main(args):
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
-                                        seed=2)
+                                        seed=2,
+                                        preload=True)
     test_loader = DataLoader(test_dataset, batch_size=args.sequence_length, shuffle=False)
     train_loader = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 
