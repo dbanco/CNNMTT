@@ -24,9 +24,12 @@ import matplotlib.pyplot as plt
 import wandb
 
 def setup_ddp():
-    dist.init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+ 
     torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     return local_rank
 
 def cleanup():
@@ -147,8 +150,8 @@ def main(args):
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
 
-    train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=local_rank, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=4,pin_memory=True,)
+    train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=0,pin_memory=True,)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -192,7 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=90)
+    parser.add_argument('--batch_size', type=int, default=30)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
