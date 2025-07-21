@@ -121,6 +121,17 @@ def visualize_sequence(model, data_loader, device_id, save_dir, prefix="sequence
 
 
 def main(args):
+    
+    shared_dataset = MTTSyntheticDataset(
+        num_spots=3,
+        num_samples=args.num_train_samples,
+        sequence_length=args.sequence_length,
+        noise=True,
+        input_shape=(1, args.height, args.width),
+        seed=1,
+        preload=True
+    )
+    
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
     g_rank = dist.get_rank()
@@ -137,14 +148,7 @@ def main(args):
     param_count = sum(p.numel() for p in model.parameters())
     print(f"[RANK {g_rank}] Model parameter count: {param_count}", flush=True)
 
-
-    train_dataset = MTTSyntheticDataset(num_spots=3,
-                                        num_samples=args.num_train_samples,
-                                        sequence_length=args.sequence_length,
-                                        noise=True,
-                                        input_shape=(1, args.height, args.width),
-                                        seed=1,
-                                        preload=True)
+    train_dataset = shared_dataset
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=16,pin_memory=True,)
