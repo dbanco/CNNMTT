@@ -123,9 +123,9 @@ def visualize_sequence(model, data_loader, device_id, save_dir, prefix="sequence
 def main(args):
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
-    rank = dist.get_rank()
+    g_rank = dist.get_rank()
     
-    device_id = rank % torch.cuda.device_count()
+    device_id = g_rank % torch.cuda.device_count()
     
     # Set seeds for reproducibility
     # torch.manual_seed(0)
@@ -135,7 +135,7 @@ def main(args):
     model = DDP(model, device_ids=[device_id])
     
     param_count = sum(p.numel() for p in model.parameters())
-    print(f"[RANK {dist.get_rank()}] Model parameter count: {param_count}", flush=True)
+    print(f"[RANK {g_rank}] Model parameter count: {param_count}", flush=True)
 
 
     train_dataset = MTTSyntheticDataset(num_spots=3,
