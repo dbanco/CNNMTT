@@ -111,14 +111,8 @@ def visualize_sequence(model, data_loader, save_dir, prefix="sequence", time_ind
 
 def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs)
-
-    train_dataset = MTTSyntheticDataset(num_spots=3,
-                                        num_samples=args.num_train_samples,
-                                        sequence_length=args.sequence_length,
-                                        noise=True,
-                                        input_shape=(1, args.height, args.width),
-                                        seed=0,
-                                        preload=True)
+    
+    train_dataset = shared_dataset
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
     criterion = nn.MSELoss()
@@ -145,7 +139,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=10)
+    parser.add_argument('--num_train_samples', type=int, default=1)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
@@ -154,5 +148,13 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
     args = parser.parse_args()
-
+    
+    shared_dataset = MTTSyntheticDataset(num_spots=3,
+                                        num_samples=args.num_train_samples,
+                                        sequence_length=args.sequence_length,
+                                        noise=True,
+                                        input_shape=(1, args.height, args.width),
+                                        seed=0,
+                                        preload=True)
+    
     main(args)
