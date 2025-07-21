@@ -8,12 +8,14 @@ import torch
 
 import torch.optim as optim
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.ao.quantization import prepare_qat, convert, get_default_qat_qconfig
 
 import argparse
-from mtt_cnn import MTTModel
+from mtt_cnn import MTTModel, MTTModelQAT
 from synth_xray_data import MTTSyntheticDataset
 
 import logging
@@ -32,9 +34,10 @@ def setup_ddp():
 def cleanup():
     dist.destroy_process_group()
 
-def train(model, train_loader, criterion, optimizer, device, num_epochs, train_sampler):
+def train(model, train_loader, criterion, optimizer, device, num_epochs, train_sampler, use_amp):
     train_losses = []
-
+    scaler = GradScaler() if use_amp else None
+    
     # Create output/log/checkpoint dirs
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_dir = f'outputs/run_{timestamp}'
@@ -62,12 +65,20 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
             inputs, truths = inputs.to(device), truths.to(device)
-
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, truths)
-            loss.backward()
-            optimizer.step()
+            
+            if use_amp:
+                with autocast():
+                    outputs = model(inputs)
+                    loss = criterion(outputs, truths)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                outputs = model(inputs)
+                loss = criterion(outputs, truths)
+                loss.backward()
+                optimizer.step()
 
             running_loss += loss.item()
             if dist.get_rank() == 0:
@@ -90,6 +101,13 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
             }, checkpoint_path)
     
             logging.info(f"Saved checkpoint: {checkpoint_path}")
+
+    # Convert QAT-trained model to a quantized one
+    model.eval()
+    quantized_model = convert(model.eval(), inplace=False)
+    
+    # Save for deployment
+    torch.save(quantized_model.state_dict(), "qat_quantized_model.pth")
 
     return train_losses
 
@@ -129,9 +147,22 @@ def visualize_sequence(model, data_loader, device, save_dir, prefix="sequence", 
 def main(args):
     local_rank = setup_ddp()
     device = torch.device(f"cuda:{local_rank}")
-
-    model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
-    model = DDP(model, device_ids=[local_rank])
+    
+    amp_model = MTTModel(input_channels=1, output_channels=args.num_outputs)
+    amp_model.load_state_dict(torch.load('amp_trained_model.pth'))
+    amp_model.eval()
+    
+    qat_model = MTTModelQAT(input_channels=1, output_channels=args.num_outputs).to(device)
+    missing, unexpected = qat_model.load_state_dict(amp_model.state_dict(), strict=False)
+    print(f"Missing keys: {missing}")
+    print(f"Unexpected keys: {unexpected}")
+    
+    # Now fuse modules and prepare QAT
+    qat_model.fuse_model()  # fuse conv+relu pairs
+    qat_model.qconfig = torch.ao.quantization.get_default_qat_qconfig('fbgemm')
+    torch.ao.quantization.prepare_qat(qat_model, inplace=True)
+    
+    qat_model = DDP(qat_model, device_ids=[local_rank])
 
     train_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
@@ -139,11 +170,11 @@ def main(args):
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
-    train_sampler = DistributedSampler(train_dataset, shuffle=True)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(qat_model.parameters(), lr=args.lr)
 
     if dist.get_rank() == 0:
         wandb.init(project="mtt-cnn", config={
@@ -152,10 +183,9 @@ def main(args):
             "learning_rate": args.lr,
             "architecture": "MTTModel"
         })
-        wandb.watch(model, log="all")
+        wandb.watch(qat_model, log="all")
     
-    train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
-
+    train(qat_model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler, args.use_amp)
 
     test_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
@@ -168,8 +198,8 @@ def main(args):
 
     if dist.get_rank() == 0:
         save_dir = "./visualizations"
-        visualize_sequence(model, train_loader, device, save_dir, prefix="train")
-        visualize_sequence(model, test_loader, device, save_dir, prefix="test")
+        visualize_sequence(qat_model, train_loader, device, save_dir, prefix="train")
+        visualize_sequence(qat_model, test_loader, device, save_dir, prefix="test")
         
         wandb.log({
         "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
@@ -180,14 +210,15 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=1000)
+    parser.add_argument('--num_train_samples', type=int, default=1000000)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=120)
+    parser.add_argument('--batch_size', type=int, default=60)
     parser.add_argument('--num_epochs', type=int, default=60)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--num_outputs', type=int, default=1)
+    parser.add_argument('--use_amp', type=int, default=True)
     args = parser.parse_args()
 
     main(args)

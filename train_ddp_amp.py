@@ -8,6 +8,7 @@ import torch
 
 import torch.optim as optim
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
@@ -32,9 +33,10 @@ def setup_ddp():
 def cleanup():
     dist.destroy_process_group()
 
-def train(model, train_loader, criterion, optimizer, device, num_epochs, train_sampler):
+def train(model, train_loader, criterion, optimizer, device, num_epochs, train_sampler, use_amp):
     train_losses = []
-
+    scaler = GradScaler() if use_amp else None
+    
     # Create output/log/checkpoint dirs
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_dir = f'outputs/run_{timestamp}'
@@ -62,12 +64,20 @@ def train(model, train_loader, criterion, optimizer, device, num_epochs, train_s
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
             inputs, truths = inputs.to(device), truths.to(device)
-
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, truths)
-            loss.backward()
-            optimizer.step()
+            
+            if use_amp:
+                with autocast():
+                    outputs = model(inputs)
+                    loss = criterion(outputs, truths)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                outputs = model(inputs)
+                loss = criterion(outputs, truths)
+                loss.backward()
+                optimizer.step()
 
             running_loss += loss.item()
             if dist.get_rank() == 0:
@@ -139,7 +149,7 @@ def main(args):
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
-    train_sampler = DistributedSampler(train_dataset, shuffle=True)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
     criterion = nn.MSELoss()
@@ -154,7 +164,7 @@ def main(args):
         })
         wandb.watch(model, log="all")
     
-    train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler)
+    train(model, train_loader, criterion, optimizer, device, args.num_epochs, train_sampler, args.use_amp)
 
 
     test_dataset = MTTSyntheticDataset(num_spots=3,
@@ -180,14 +190,15 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=1000)
+    parser.add_argument('--num_train_samples', type=int, default=1000000)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=120)
+    parser.add_argument('--batch_size', type=int, default=60)
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_outputs', type=int, default=1)
+    parser.add_argument('--use_amp', type=int, default=True)
     args = parser.parse_args()
 
     main(args)
