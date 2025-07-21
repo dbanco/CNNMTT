@@ -5,10 +5,9 @@
 #SBATCH -N 1                        # number of nodes
 #SBATCH -n 4                        # number of tasks total (processes)
 #SBATCH --mem=96g                    # total RAM requested (increase if needed)
-#SBATCH --gres=gpu:a100:4           # request 4 A100 GPUs
-#SBATCH --constraint="a100-80G"     # only request A100 with 80GB memory
-#SBATCH --output=MyJob.%j.%N.out    # stdout file
-#SBATCH --error=MyJob.%j.%N.err     # stderr file
+#SBATCH --gres=gpu:4           # request 4 A100 GPUs
+#SBATCH --output=cnn-mtt.%j.%N.out    # stdout file
+#SBATCH --error=cnn-mtt.%j.%N.err     # stderr file
 #SBATCH --mail-type=ALL             # email notifications on all events
 #SBATCH --mail-user=dbanco02@tufts.edu
 
