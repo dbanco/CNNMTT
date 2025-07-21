@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import convolve
 import torch.distributed as dist
 import time
+import concurrent.futures
 
 
 def gaussian_basis_1d(N, mu, sigma, scaling='2-norm'):
@@ -167,7 +168,7 @@ def generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), num_spots=np.ran
     return V, U, spot_params
 
 class MTTSyntheticDataset(Dataset):
-    def __init__(self, num_spots, num_samples, sequence_length, noise, input_shape, seed=None):
+    def __init__(self, num_spots, num_samples, sequence_length, noise, input_shape, seed=None, preload=False):
         """
         num_samples: Number of synthetic sequences to generate
         sequence_length: Frames per sequence
@@ -181,26 +182,33 @@ class MTTSyntheticDataset(Dataset):
         self.sequence_length = sequence_length
         self.input_shape = input_shape
         self.noise = noise
+        self.preload = preload
+        
         if seed is not None:
             np.random.seed(seed)
 
         self.total_frames = num_samples * sequence_length
-        
         self.precompute_params()
+        
+        if self.preload:
+            self.preload_all()
 
     def __len__(self):
         return self.total_frames
 
     def __getitem__(self, idx):
-        seq_idx = idx // self.sequence_length
-        frame_idx = idx % self.sequence_length
+        if self.preload:
+            return self.inputs[idx], self.labels[idx]
+        else:
+            seq_idx = idx // self.sequence_length
+            frame_idx = idx % self.sequence_length
+            try:
+                input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
+            except Exception as e:
+                print(f"Error at index {idx}: {e}")
+                return None
+            return torch.tensor(input_img, dtype=torch.float32), torch.tensor(truth_mask, dtype=torch.float32)
 
-        try:
-            input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
-        except Exception as e:
-            print(f"Error at index {idx}: {e}")
-            return None  # This will cause the Dataloader to fail
-        return torch.tensor(input_img, dtype=torch.float32), torch.tensor(truth_mask, dtype=torch.float32)
 
 
     def precompute_params(self):
@@ -264,36 +272,48 @@ class MTTSyntheticDataset(Dataset):
         V[0, :, :] = np.random.poisson(frame_clean) if self.noise else frame_clean
 
         return V, U
-
-# This function adapts the big generated volume to one sample per call for Dataset
-def generate_fn(seed):
-    """
-    Given a seed (or seq_idx), generate one full synthetic sequence:
-    - V: observed data volume (C,H,W,T) or (H,W,T)
-    - U: ground truth volume (num_outputs, H, W, T)
-    - params: any spot parameters (optional)
-    """
-    V, U, params = generate_mtt_dataset_multichannel_truth(seed=seed)
-    return V, U, params
     
+    def preload_all(self):
+        print(f"[INFO] Preloading {self.total_frames} frames in parallel...")
+        indices = [(seq_idx, frame_idx)
+                   for seq_idx in range(self.num_samples)
+                   for frame_idx in range(self.sequence_length)]
+    
+        def gen_frame(idx_pair):
+            seq_idx, frame_idx = idx_pair
+            V, U = self.generate_frame(seq_idx, frame_idx)
+            return torch.tensor(V, dtype=torch.float32), torch.tensor(U, dtype=torch.float32)
+    
+        with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+            results = list(executor.map(gen_frame, indices))
+    
+        self.inputs, self.labels = zip(*results)
+        # print(f"[INFO] Preloading complete.")
+       
 
 if __name__ == "__main__": 
     from torch.utils.data import DataLoader
     train_dataset = MTTSyntheticDataset(num_spots=3,
-                                        num_samples=10,
+                                        num_samples=100,
                                         sequence_length=30,
                                         noise=True,
                                         input_shape=(1, 32, 96),
-                                        seed=1)
-    train_loader = DataLoader(train_dataset, batch_size=30, shuffle=False)
-    for batch_idx, (inputs, truths) in enumerate(train_loader):
-        break
+                                        seed=1,
+                                        preload=True)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
     
-    plt.figure()
-    plt.imshow(inputs[0,0,:,:])
+    start = time.time()   
+    aa = 0
+    for batch_idx, (inputs, truths) in enumerate(train_loader):
+        aa+=1
+    print(f"Avg sample generation time: {(time.time() - start) / 100:.4f} seconds")
+    
+    
+    # plt.figure()
+    # plt.imshow(inputs[0,0,:,:])
 
-    plt.figure()
-    plt.imshow(truths[0,0,:,:])
+    # plt.figure()
+    # plt.imshow(truths[0,0,:,:])
     
     
     '''

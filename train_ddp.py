@@ -55,7 +55,7 @@ def train(model, train_loader, criterion, optimizer, device_id, num_epochs, trai
         running_loss = 0.0
 
         for batch_idx, (inputs, truths) in enumerate(train_loader):
-            inputs, truths = inputs.to(device_id), truths.to(device_id)
+            inputs, truths = inputs.to(device_id, non_blocking=True), truths.to(device_id, non_blocking=True)
 
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -145,8 +145,34 @@ def main(args):
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
 
+
+    dataset = InMemoryDataset(all_data)
+    
+    sampler = torch.utils.data.distributed.DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True
+    )
+    
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=0,  # no workers needed; data is in RAM
+        pin_memory=True
+    )
+
+
+    train_dataset = MTTSyntheticDataset(num_spots=3,
+                                        num_samples=args.num_train_samples,
+                                        sequence_length=args.sequence_length,
+                                        noise=True,
+                                        input_shape=(1, args.height, args.width),
+                                        seed=1)
+
     train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=0,pin_memory=True,)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=16,pin_memory=True,)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -186,7 +212,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=6000)
+    parser.add_argument('--num_train_samples', type=int, default=600)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
