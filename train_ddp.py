@@ -133,14 +133,19 @@ def main(args):
     model = MTTModel(input_channels=1, output_channels=args.num_outputs).to(device)
     model = DDP(model, device_ids=[local_rank])
 
+    # Set seeds for reproducibility
+    torch.manual_seed(0)
+    torch.cuda.manual_seed_all(0)
+
     train_dataset = MTTSyntheticDataset(num_spots=3,
                                         num_samples=args.num_train_samples,
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
                                         seed=1)
-    train_sampler = DistributedSampler(train_dataset, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
+
+    train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=4,pin_memory=True,)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -158,17 +163,17 @@ def main(args):
 
 
     test_dataset = MTTSyntheticDataset(num_spots=3,
-                                        num_samples=args.num_train_samples,
+                                        num_samples=1,
                                         sequence_length=args.sequence_length,
                                         noise=True,
                                         input_shape=(1, args.height, args.width),
                                         seed=2)
     test_loader = DataLoader(test_dataset, batch_size=args.sequence_length)
-    train_loader = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
+    train_loader_vis = DataLoader(train_dataset, batch_size=args.sequence_length, shuffle=False)
 
     if dist.get_rank() == 0:
         save_dir = "./visualizations"
-        visualize_sequence(model, train_loader, device, save_dir, prefix="train")
+        visualize_sequence(model, train_loader_vis, device, save_dir, prefix="train")
         visualize_sequence(model, test_loader, device, save_dir, prefix="test")
         
         wandb.log({
