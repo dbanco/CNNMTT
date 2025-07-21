@@ -195,7 +195,13 @@ class MTTSyntheticDataset(Dataset):
         seq_idx = idx // self.sequence_length
         frame_idx = idx % self.sequence_length
 
-        input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
+        
+        try:
+            input_img, truth_mask = self.generate_frame(seq_idx, frame_idx)
+        except Exception as e:
+            print(f"Error at index {idx}: {e}")
+            return None  # This will cause the Dataloader to fail
+        return torch.tensor(input_img, dtype=torch.float32), torch.tensor(truth_mask, dtype=torch.float32)
 
 
     def precompute_params(self):
@@ -206,8 +212,8 @@ class MTTSyntheticDataset(Dataset):
         
         spots_shape = (self.num_samples, self.num_spots)
         self.amps = 20 + 130* np.random.rand(self.num_samples,self.num_spots)
-        self.base_pos_y = 0.25*H + 0.5*np.random.randint(0, H, size=spots_shape)
-        self.base_pos_x = 0.15*W + 0.5*np.random.randint(0, W, size=spots_shape)
+        self.base_pos_y = (0.25 + 0.5 * np.random.rand(*spots_shape)) * H
+        self.base_pos_x = (0.15 + 0.5 * np.random.rand(*spots_shape)) * W
 
         self.shift_amp_y = H * 0.005 * np.random.rand(self.num_samples,self.num_spots)      # tiny vertical shift
         self.shift_amp_x = W * (0.02 + 0.06 * np.random.rand(self.num_samples,self.num_spots))  # larger horizontal shift
@@ -216,7 +222,7 @@ class MTTSyntheticDataset(Dataset):
         self.base_width_x = 0.5 + 0.125 * np.random.rand(self.num_samples,self.num_spots)
 
         self.grow_width_y = 0.1 + 0.3 * np.random.rand(self.num_samples,self.num_spots)
-        self.grow_width_x = 5   + 2   * np.random.randn(self.num_samples,self.num_spots)
+        self.grow_width_x = 5   + 2   * np.random.randn(self.num_samples,self.num_spots)**2
 
         psf_sigma = 1
         g_y = gaussian_basis_1d(H, H/2, psf_sigma, scaling='max')
@@ -275,7 +281,7 @@ def generate_fn(seed):
 
 if __name__ == "__main__": 
     
-    dataset = MTTSyntheticDataset(3, 1000000, 30, noise=True, input_shape=(32, 96, 30), seed=None)
+    dataset = MTTSyntheticDataset(3, 100, 30, noise=True, input_shape=(32, 96, 30), seed=None)
     '''
     # Generate the full dataset once for the sake of example
     V, U, params = generate_mtt_dataset_multichannel_truth(shape=(32, 96, 30), seed=np.random.randint(0,10000))
