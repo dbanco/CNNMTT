@@ -17,6 +17,10 @@ module load anaconda
 module load cuda
 source activate xrayai
 
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=ALL
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
 # Launch distributed training using torchrun with 4 GPUs
 torchrun --nproc_per_node=4 --master_port=12355 train_ddp.py
 
