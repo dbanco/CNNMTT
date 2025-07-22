@@ -210,15 +210,4 @@ if __name__ == '__main__':
     parser.add_argument('--num_outputs', type=int, default=1)
     args = parser.parse_args()
 
-    print("Preloading dataset once into shared memory...")
-    shared_dataset = MTTSyntheticDataset(
-        num_spots=3,
-        num_samples=args.num_train_samples,
-        sequence_length=args.sequence_length,
-        noise=True,
-        input_shape=(1, args.height, args.width),
-        seed=1,
-        preload=True,
-    )
-
     main(args)
