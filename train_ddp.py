@@ -224,7 +224,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=300)
+    parser.add_argument('--num_train_samples', type=int, default=3000)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)

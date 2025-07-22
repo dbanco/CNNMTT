@@ -285,8 +285,8 @@ class MTTSyntheticDataset(Dataset):
             V, U = self.generate_frame(seq_idx, frame_idx)
             return torch.tensor(V, dtype=torch.float32), torch.tensor(U, dtype=torch.float32)
     
-        with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-            results = list(tqdm(executor.map(gen_frame, indices), total=len(indices), desc="Preloading", unit="frames"))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as executor:
+            results = list(executor.map(gen_frame, indices))
     
         self.inputs, self.labels = zip(*results)
         # print(f"[INFO] Preloading complete.")
