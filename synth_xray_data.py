@@ -290,7 +290,19 @@ class MTTSyntheticDataset(Dataset):
     
         self.inputs, self.labels = zip(*results)
         # print(f"[INFO] Preloading complete.")
-       
+
+class PreloadedMTTDataset(Dataset):
+    def __init__(self, path):
+        print(f"[INFO] Loading dataset from {path}")
+        data = torch.load(path, map_location='cpu')  # use 'cuda' if you want direct GPU load
+        self.inputs = data["inputs"]
+        self.labels = data["labels"]
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, idx):
+        return self.inputs[idx], self.labels[idx]
 
 if __name__ == "__main__": 
     from torch.utils.data import DataLoader
