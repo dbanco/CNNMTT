@@ -119,35 +119,59 @@ def visualize_sequence(model, data_loader, device_id, save_dir, prefix="sequence
         plt.close(fig)
         print(f"Saved visualization to {filename}")
 
-# Shared global dataset
-_shared_dataset = None
+def setup_shared_dataset(args, rank):
+    global inputs_shared, labels_shared
 
-def get_shared_dataset(args):
-    global _shared_dataset
-    if _shared_dataset is None:
-        _shared_dataset = MTTSyntheticDataset(
+    if rank == 0:
+        print(f"[Rank {rank}] Generating dataset in shared memory...")
+        dataset = MTTSyntheticDataset(
             num_spots=3,
             num_samples=args.num_train_samples,
             sequence_length=args.sequence_length,
-            noise=True,
             input_shape=(1, args.height, args.width),
+            preload=True,
             seed=42,
-            preload=True
+            noise=True
         )
-    return _shared_dataset
+        inputs_shared = dataset.inputs
+        labels_shared = dataset.labels
+    dist.barrier()
+
+    if rank != 0:
+        # Create empty shared memory tensors (must match shape!)
+        inputs_shared = torch.empty(
+            args.num_train_samples*args.sequence_length, 1, args.height, args.width
+        ).share_memory_()
+
+        labels_shared = torch.empty(
+            args.num_train_samples*args.sequence_length, 1, args.height, args.width
+        ).share_memory_()
+
+    dist.barrier()  # Sync before use
+
+    # Wrap shared tensors in dataset
+    shared_dataset = MTTSyntheticDataset(
+        num_spots=3,
+        num_samples=args.num_train_samples,
+        sequence_length=args.sequence_length,
+        input_shape=(1, args.height, args.width),
+        preload=False,
+        seed=42,
+        noise=True
+    )
+    shared_dataset.preload = True
+    shared_dataset.inputs = inputs_shared
+    shared_dataset.labels = labels_shared
+    
+    return shared_dataset
 
 def main(args):
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
     g_rank = dist.get_rank()
     device_id = g_rank % torch.cuda.device_count()
-    
-    if g_rank == 0:
-        print(f"[Rank {g_rank}] Preloading dataset...", flush=True)
-        train_dataset = get_shared_dataset(args)
-    dist.barrier()  # Wait for preload
-    if g_rank != 0:
-        train_dataset = get_shared_dataset(args)
+
+    train_dataset = setup_shared_dataset(args, g_rank)
     
     # Set seeds for reproducibility
     # torch.manual_seed(0)
@@ -200,7 +224,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_train_samples', type=int, default=30000)
+    parser.add_argument('--num_train_samples', type=int, default=300)
     parser.add_argument('--sequence_length', type=int, default=30)
     parser.add_argument('--height', type=int, default=32)
     parser.add_argument('--width', type=int, default=96)
