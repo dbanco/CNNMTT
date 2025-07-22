@@ -5,7 +5,9 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=02:00:00
-#SBATCH --partition=cpu
+#SBATCH --mail-type=ALL             # email notifications on all events
+#SBATCH --mail-user=dbanco02@tufts.edu
+
 
 module load anaconda
 conda activate xrayai
