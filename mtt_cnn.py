@@ -64,10 +64,9 @@ class MTTModel(nn.Module):
         
         return out
     
-class MTTModelQAT(MTTModel):
+class MTTModelQAT(nn.Module):
     def __init__(self, input_channels=1, output_channels=1):  # output_channels=4 now
-
-        
+        super(MTTModelQAT, self).__init__()    
         self.quant = QuantStub()
         
         # Encoder remains unchanged
@@ -121,8 +120,8 @@ class MTTModelQAT(MTTModel):
             fuse_modules(self.bottleneck, [str(idx), str(idx + 1)], inplace=True)
     
         # Fuse convtranspose + relu layers in decoder except the last convtranspose
-        for idx in range(0, len(self.decoder) - 1, 2):
-            fuse_modules(self.decoder, [str(idx), str(idx + 1)], inplace=True)
+        # for idx in range(0, len(self.decoder) - 1, 2):
+        #     fuse_modules(self.decoder, [str(idx), str(idx + 1)], inplace=True)
 
 
 if __name__ == "__main__":
