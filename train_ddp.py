@@ -119,12 +119,35 @@ def visualize_sequence(model, data_loader, device_id, save_dir, prefix="sequence
         plt.close(fig)
         print(f"Saved visualization to {filename}")
 
+# Shared global dataset
+_shared_dataset = None
+
+def get_shared_dataset(args):
+    global _shared_dataset
+    if _shared_dataset is None:
+        _shared_dataset = MTTSyntheticDataset(
+            num_spots=3,
+            num_samples=args.num_train_samples,
+            sequence_length=args.sequence_length,
+            noise=True,
+            input_shape=(1, args.height, args.width),
+            seed=42,
+            preload=True
+        )
+    return _shared_dataset
+
 def main(args):
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl")
     g_rank = dist.get_rank()
-    
     device_id = g_rank % torch.cuda.device_count()
+    
+    if g_rank == 0:
+        print(f"[Rank {g_rank}] Preloading dataset...", flush=True)
+        train_dataset = get_shared_dataset(args)
+    dist.barrier()  # Wait for preload
+    if g_rank != 0:
+        train_dataset = get_shared_dataset(args)
     
     # Set seeds for reproducibility
     # torch.manual_seed(0)
@@ -135,8 +158,6 @@ def main(args):
     
     param_count = sum(p.numel() for p in model.parameters())
     print(f"[RANK {g_rank}] Model parameter count: {param_count}", flush=True)
-
-    train_dataset = shared_dataset
 
     train_sampler = DistributedSampler(train_dataset, num_replicas=dist.get_world_size(), rank=dist.get_rank(), shuffle=True)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler,num_workers=16,pin_memory=True,)
