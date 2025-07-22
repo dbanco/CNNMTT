@@ -11,6 +11,7 @@ from scipy.ndimage import convolve
 import torch.distributed as dist
 import time
 import concurrent.futures
+from tqdm import tqdm
 
 
 def gaussian_basis_1d(N, mu, sigma, scaling='2-norm'):
@@ -285,7 +286,7 @@ class MTTSyntheticDataset(Dataset):
             return torch.tensor(V, dtype=torch.float32), torch.tensor(U, dtype=torch.float32)
     
         with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-            results = list(executor.map(gen_frame, indices))
+            results = list(tqdm(executor.map(gen_frame, indices), total=len(indices), desc="Preloading", unit="frames"))
     
         self.inputs, self.labels = zip(*results)
         # print(f"[INFO] Preloading complete.")
