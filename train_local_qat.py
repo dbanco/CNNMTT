@@ -17,6 +17,7 @@ from torch.ao.quantization.observer import default_observer, default_weight_obse
 import argparse
 from mtt_cnn import MTTModel, MTTModelQAT
 from synth_xray_data import MTTSyntheticDataset, PreloadedMTTDataset
+from torch.quantization import convert
 
 import logging
 import os
@@ -24,9 +25,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 import wandb
-
-
-
 
 def train(model, train_loader, criterion, optimizer, num_epochs, use_amp):
     train_losses = []
@@ -99,6 +97,13 @@ def train(model, train_loader, criterion, optimizer, num_epochs, use_amp):
     
     # Save for deployment
     torch.save(quantized_model.state_dict(), "qat_quantized_model.pth")
+    
+    # Use torch.jit.trace for static models (most common for CNNs)
+    example_input = torch.randn(1, 1, 32, 96)
+    traced_model = torch.jit.trace(quantized_model, example_input)
+    
+    # Save TorchScript model for C++ LibTorch deployment
+    traced_model.save("qat_quantized_model.pt")
 
     return train_losses
 
@@ -167,13 +172,13 @@ def main(args):
     optimizer = optim.Adam(qat_model.parameters(), lr=args.lr)
 
   
-    wandb.init(project="mtt-cnn", config={
-        "epochs": args.num_epochs,
-        "batch_size": args.batch_size,
-        "learning_rate": args.lr,
-        "architecture": "MTTModel"
-    })
-    wandb.watch(qat_model, log="all")
+    # wandb.init(project="mtt-cnn", config={
+    #     "epochs": args.num_epochs,
+    #     "batch_size": args.batch_size,
+    #     "learning_rate": args.lr,
+    #     "architecture": "MTTModel"
+    # })
+    # wandb.watch(qat_model, log="all")
     
     train(qat_model, train_loader, criterion, optimizer, args.num_epochs, args.use_amp)
 
@@ -191,10 +196,10 @@ def main(args):
     visualize_sequence(qat_model, train_loader, save_dir, prefix="train")
     visualize_sequence(qat_model, test_loader, save_dir, prefix="test")
     
-    wandb.log({
-    "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
-    "Test Sequence Visualization": wandb.Image(f"{save_dir}/test_visualization.png"),
-    })
+    # wandb.log({
+    # "Train Sequence Visualization": wandb.Image(f"{save_dir}/train_visualization.png"),
+    # "Test Sequence Visualization": wandb.Image(f"{save_dir}/test_visualization.png"),
+    # })
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
